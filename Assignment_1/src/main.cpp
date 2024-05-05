@@ -34,6 +34,26 @@ Eigen::Matrix4f get_model_matrix(float rotation_angle)
     return model;
 }
 
+// Create the model matrix for rotating the triangle around any axis
+Eigen::Matrix4f get_rotation(Vector3f axis, float angle){
+    Eigen::Matrix3f model = Eigen::Matrix3f::Identity();
+    const auto angle_radian = angle*MY_PI/180;
+    Eigen::Matrix3f crossModel;
+    auto& n = axis;
+    crossModel << 0,-n[2],n[1],
+                n[2],0,-n[0],
+                -n[1],n[0],0;
+    model = cos(angle_radian)*model + (1-cos(angle_radian))*n*n.transpose() + sin(angle_radian)*crossModel;
+
+    Eigen::Matrix4f retModel;
+    retModel << retModel.row(0),0,
+                retModel.row(1),0,
+                retModel.row(2),0,
+                0,0,0,1;
+    return retModel;
+    
+}
+
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
                                       float zNear, float zFar)
 {
