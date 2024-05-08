@@ -1,5 +1,11 @@
+#include <algorithm>
+#include <cmath>
+#include <eigen3/Eigen/Eigen>
+#include <eigen3/Eigen/src/Core/GlobalFunctions.h>
+#include <eigen3/Eigen/src/Core/Matrix.h>
+#include <filesystem>
 #include <iostream>
-#include <opencv2/opencv.hpp>
+#include <opencv4/opencv2/opencv.hpp>
 
 #include "global.hpp"
 #include "rasterizer.hpp"
@@ -49,8 +55,23 @@ Eigen::Matrix4f get_model_matrix(float angle)
 
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar)
 {
-    // TODO: Use the same projection matrix from the previous assignments
+    // 因为此处传入的znear, zfar为正数, 需要取负数才能符合右手系的运算
+    zNear = -zNear;
+    zFar = -zFar;
+    std::swap(zNear,zFar);
 
+    Eigen::Matrix4f projection = Eigen::Matrix4f::Identity();
+    const auto eye_fov_radian = eye_fov*MY_PI/180;
+    auto t = tan(eye_fov_radian/2)*abs(zNear);
+    auto b = -t;
+    auto r = aspect_ratio * t;
+    auto l = -r;
+
+    projection << 2*zNear/(r-l),0,(l+r)/(l-r),0,
+                0,2*zNear/(t-b),(b+t)/(b-t),0,
+                0,0,(zNear+zFar)/(zNear-zFar),-2*zFar*zNear/(zNear-zFar),
+                0,0,1,0;
+    return projection;
 }
 
 Eigen::Vector3f vertex_shader(const vertex_shader_payload& payload)
@@ -84,6 +105,9 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
     if (payload.texture)
     {
         // TODO: Get the texture value at the texture coordinates of the current fragment
+        float u = payload.tex_coords.x();
+        float v = payload.tex_coords.y();
+        return_color = payload.texture->getColorBilinear(u,v);
 
     }
     Eigen::Vector3f texture_color;
@@ -107,12 +131,23 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
     Eigen::Vector3f normal = payload.normal;
 
     Eigen::Vector3f result_color = {0, 0, 0};
+    Eigen::Vector3f La = ka.cwiseProduct(amb_light_intensity);
+    Eigen::Vector3f viewDir = (-point).normalized();
 
-    for (auto& light : lights)
+    for (auto& l : lights)
     {
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
         // components are. Then, accumulate that result on the *result_color* object.
+        float r2 = (l.position-point).squaredNorm();// 这是光源到物体的距离
+        Eigen::Vector3f lightDir = (l.position - point).normalized();
+        Eigen::Vector3f h = (viewDir+lightDir).normalized();
+        Eigen::Vector3f intensity = l.intensity/(r2);//强度随着物体距离光源衰减，我们假设物体发射的光到我们眼过程中不会衰减
+        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
 
+        Eigen::Vector3f Ld = kd.cwiseProduct(intensity)*fmax(0,normal.dot(lightDir));
+        Eigen::Vector3f Ls = ks.cwiseProduct(intensity)*pow(fmax(0,normal.dot(h)),p);
+        // components are. Then, accumulate that result on the *result_color* object.
+        result_color += La + Ld + Ls;
     }
 
     return result_color * 255.f;
@@ -124,6 +159,7 @@ Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
 
+    // light代表的是光源, 光的向量要根据位置Position的不同而不同
     auto l1 = light{{20, 20, 20}, {500, 500, 500}};
     auto l2 = light{{-20, 20, 0}, {500, 500, 500}};
 
@@ -135,14 +171,25 @@ Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
 
     Eigen::Vector3f color = payload.color;
     Eigen::Vector3f point = payload.view_pos;
+
     Eigen::Vector3f normal = payload.normal;
 
     Eigen::Vector3f result_color = {0, 0, 0};
-    for (auto& light : lights)
+    Eigen::Vector3f La = ka.cwiseProduct(amb_light_intensity);
+    
+    Eigen::Vector3f viewDir = (-point).normalized();
+    for (light& l : lights)
     {
+        float r2 = (l.position-point).squaredNorm();// 这是光源到物体的距离
+        Eigen::Vector3f lightDir = (l.position - point).normalized();
+        Eigen::Vector3f h = (viewDir+lightDir).normalized();
+        Eigen::Vector3f intensity = l.intensity/(r2);//强度随着物体距离光源衰减，我们假设物体发射的光到我们眼过程中不会衰减
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+
+        Eigen::Vector3f Ld = kd.cwiseProduct(intensity)*fmax(0,normal.dot(lightDir));
+        Eigen::Vector3f Ls = ks.cwiseProduct(intensity)*pow(fmax(0,normal.dot(h)),p);
         // components are. Then, accumulate that result on the *result_color* object.
-        
+        result_color += La + Ld + Ls;
     }
 
     return result_color * 255.f;
@@ -182,17 +229,50 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
     // Vector ln = (-dU, -dV, 1)
     // Position p = p + kn * n * h(u,v)
     // Normal n = normalize(TBN * ln)
+    Eigen::Vector3f& n = normal;
+    float x = n.x();
+    float y = n.y();
+    float z = n.z();
+
+    // TBN 矩阵, 用于将切线空间法线转换到其他空间的矩阵
+    Eigen::Vector3f t(x*y/sqrt(x*x+z*z),sqrt(x*x+z*z),z*y/sqrt(x*x+z*z));
+    Eigen::Vector3f b(n.cross(t));
+    Eigen::Matrix3f TBN;
+    TBN << t,b,n;
+
+    float u = payload.tex_coords.x();
+    float v = payload.tex_coords.y();
+    float w = payload.texture->width;
+    float h = payload.texture->height;
+
+    float dU = kh*kn*(payload.texture->getColor(u+1.0f/w, v).norm()-payload.texture->getColor(u, v).norm());
+    float dV = kh*kn*(payload.texture->getColor(u, v+1.0f/h).norm()-payload.texture->getColor(u, v).norm());
+
+    Eigen::Vector3f ln(-dU,-dV,1.0f);
+    point = point + kn*n*(payload.texture->getColor(u,v)).norm();
+    n = (TBN*ln).normalized();
+
 
 
     Eigen::Vector3f result_color = {0, 0, 0};
 
-    for (auto& light : lights)
+    Eigen::Vector3f La = ka.cwiseProduct(amb_light_intensity);
+    
+    Eigen::Vector3f viewDir = (-point).normalized();
+    for (light& l : lights)
     {
+        float r2 = (l.position-point).squaredNorm();// 这是光源到物体的距离
+        Eigen::Vector3f lightDir = (l.position - point).normalized();
+        Eigen::Vector3f h = (viewDir+lightDir).normalized();
+        Eigen::Vector3f intensity = l.intensity/(r2);//强度随着物体距离光源衰减，我们假设物体发射的光到我们眼过程中不会衰减
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+
+        Eigen::Vector3f Ld = kd.cwiseProduct(intensity)*fmax(0,normal.dot(lightDir));
+        Eigen::Vector3f Ls = ks.cwiseProduct(intensity)*pow(fmax(0,normal.dot(h)),p);
         // components are. Then, accumulate that result on the *result_color* object.
-
-
+        result_color += La + Ld + Ls;
     }
+
 
     return result_color * 255.f;
 }
@@ -231,9 +311,48 @@ Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
     // Vector ln = (-dU, -dV, 1)
     // Normal n = normalize(TBN * ln)
 
+    Eigen::Vector3f& n = normal;
+    float x = n.x();
+    float y = n.y();
+    float z = n.z();
+
+    // TBN 矩阵, 用于将切线空间法线转换到其他空间的矩阵
+    Eigen::Vector3f t(x*y/sqrt(x*x+z*z),sqrt(x*x+z*z),z*y/sqrt(x*x+z*z));
+    Eigen::Vector3f b(n.cross(t));
+    Eigen::Matrix3f TBN;
+    TBN << t,b,n;
+
+    float u = payload.tex_coords.x();
+    float v = payload.tex_coords.y();
+    float w = payload.texture->width;
+    float h = payload.texture->height;
+
+    float dU = kh*kn*(payload.texture->getColor(u+1.0f/w, v).norm()-payload.texture->getColor(u, v).norm());
+    float dV = kh*kn*(payload.texture->getColor(u, v+1.0f/h).norm()-payload.texture->getColor(u, v).norm());
+
+    Eigen::Vector3f ln(-dU,-dV,1.0f);
+    n = (TBN*ln).normalized();
+
 
     Eigen::Vector3f result_color = {0, 0, 0};
     result_color = normal;
+
+    Eigen::Vector3f La = ka.cwiseProduct(amb_light_intensity);
+    
+    Eigen::Vector3f viewDir = (-point).normalized();
+    for (light& l : lights)
+    {
+        float r2 = (l.position-point).squaredNorm();// 这是光源到物体的距离
+        Eigen::Vector3f lightDir = (l.position - point).normalized();
+        Eigen::Vector3f h = (viewDir+lightDir).normalized();
+        Eigen::Vector3f intensity = l.intensity/(r2);//强度随着物体距离光源衰减，我们假设物体发射的光到我们眼过程中不会衰减
+        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+
+        Eigen::Vector3f Ld = kd.cwiseProduct(intensity)*fmax(0,normal.dot(lightDir));
+        Eigen::Vector3f Ls = ks.cwiseProduct(intensity)*pow(fmax(0,normal.dot(h)),p);
+        // components are. Then, accumulate that result on the *result_color* object.
+        result_color += La + Ld + Ls;
+    }
 
     return result_color * 255.f;
 }

@@ -102,7 +102,6 @@ namespace rst
         std::map<int, std::vector<Eigen::Vector3i>> ind_buf;
         std::map<int, std::vector<Eigen::Vector3f>> col_buf;
         std::map<int, std::vector<Eigen::Vector3f>> nor_buf;
-
         std::optional<Texture> texture;
 
         std::function<Eigen::Vector3f(fragment_shader_payload)> fragment_shader;

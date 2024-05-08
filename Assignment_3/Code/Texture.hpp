@@ -5,8 +5,9 @@
 #ifndef RASTERIZER_TEXTURE_H
 #define RASTERIZER_TEXTURE_H
 #include "global.hpp"
+#include <cassert>
 #include <eigen3/Eigen/Eigen>
-#include <opencv2/opencv.hpp>
+#include <opencv4/opencv2/opencv.hpp>
 class Texture{
 private:
     cv::Mat image_data;
@@ -20,6 +21,8 @@ public:
         height = image_data.rows;
     }
 
+    Eigen::Vector3f getColorBilinear(float u, float v);
+    int rangeSafe(int x, bool isU);
     int width, height;
 
     Eigen::Vector3f getColor(float u, float v)

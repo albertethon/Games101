@@ -34,9 +34,9 @@ Eigen::Matrix4f get_rotation(Vector3f axis, float angle){
     model = cos(angle_radian)*model + (1-cos(angle_radian))*n*n.transpose() + sin(angle_radian)*crossModel;
 
     Eigen::Matrix4f retModel;
-    retModel << retModel.row(0),0,
-                retModel.row(1),0,
-                retModel.row(2),0,
+    retModel << model.row(0),0,
+                model.row(1),0,
+                model.row(2),0,
                 0,0,0,1;
     return retModel;
     
