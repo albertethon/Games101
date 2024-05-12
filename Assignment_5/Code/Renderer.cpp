@@ -223,14 +223,24 @@ void Renderer::Render(const Scene& scene)
         for (int i = 0; i < scene.width; ++i)
         {
             // generate primary ray direction
-            float x;
-            float y;
+            // Pixel to NDC : [0,1]^2
+            const float NDC_x = (i+0.5)/scene.width;
+            const float NDC_y = (j+0.5)/scene.height;
+            
+            // NDC to screen : [-1,1]^2
+            const float screen_x = 2*NDC_x - 1;
+            const float screen_y = 1 - 2*NDC_y;
+            
+            // screen to real world
+            float x = screen_x * imageAspectRatio * scale; 
+            float y = screen_y * scale;
             // TODO: Find the x and y positions of the current pixel to get the direction
             // vector that passes through it.
             // Also, don't forget to multiply both of them with the variable *scale*, and
             // x (horizontal) variable with the *imageAspectRatio*            
 
             Vector3f dir = Vector3f(x, y, -1); // Don't forget to normalize this direction!
+            dir = normalize(dir);
             framebuffer[m++] = castRay(eye_pos, dir, scene, 0);
         }
         UpdateProgress(j / (float)scene.height);
