@@ -9,7 +9,7 @@
 #include <cassert>
 #include <array>
 
-bool rayTriangleIntersect(const Vector3f& v0, const Vector3f& v1,
+inline bool rayTriangleIntersect(const Vector3f& v0, const Vector3f& v1,
                           const Vector3f& v2, const Vector3f& orig,
                           const Vector3f& dir, float& tnear, float& u, float& v)
 {
@@ -232,10 +232,14 @@ inline Intersection Triangle::getIntersection(Ray ray)
     t_tmp = dotProduct(e2, qvec) * det_inv;
 
     // TODO find ray triangle intersection
+    inter.normal = normal;
+    inter.coords = Vector3f(t_tmp,u,v);
 
-
-
-
+    Vector3f distVec = inter.coords - ray.origin;
+    inter.distance = sqrt(distVec.x*distVec.x+distVec.y*distVec.y+distVec.z*distVec.z);
+    inter.happened=true;
+    inter.m = m;
+    inter.obj = this;
     return inter;
 }
 

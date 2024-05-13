@@ -6,8 +6,10 @@
 #define RAYTRACING_BOUNDS3_H
 #include "Ray.hpp"
 #include "Vector.hpp"
+#include <cmath>
 #include <limits>
 #include <array>
+#include <utility>
 
 class Bounds3
 {
@@ -96,7 +98,18 @@ inline bool Bounds3::IntersectP(const Ray& ray, const Vector3f& invDir,
     // invDir: ray direction(x,y,z), invDir=(1.0/x,1.0/y,1.0/z), use this because Multiply is faster that Division
     // dirIsNeg: ray direction(x,y,z), dirIsNeg=[int(x>0),int(y>0),int(z>0)], use this to simplify your logic
     // TODO test if ray bound intersects
-    
+    Vector3f t_enter;
+    Vector3f t_exit;
+    t_enter = (pMin - ray.origin)*invDir;
+    t_exit = (pMax - ray.origin)*invDir;
+    if(dirIsNeg[0]==0)std::swap(t_enter.x,t_exit.x);
+    if(dirIsNeg[1]==0)std::swap(t_enter.y,t_exit.y);
+    if(dirIsNeg[2]==0)std::swap(t_enter.z,t_exit.z);
+
+    float max_enter = std::max(t_enter.x, std::max(t_enter.y, t_enter.z));
+    float min_exit = std::min(t_exit.x, std::max(t_exit.y, t_exit.z));
+
+    return (min_exit - max_enter)>0 && min_exit>0;
 }
 
 inline Bounds3 Union(const Bounds3& b1, const Bounds3& b2)
