@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include "BVH.hpp"
+#include "Intersection.hpp"
 
 BVHAccel::BVHAccel(std::vector<Object*> p, int maxPrimsInNode,
                    SplitMethod splitMethod)
@@ -20,9 +21,15 @@ BVHAccel::BVHAccel(std::vector<Object*> p, int maxPrimsInNode,
     int mins = ((int)diff / 60) - (hrs * 60);
     int secs = (int)diff - (hrs * 3600) - (mins * 60);
 
-    printf(
-        "\rBVH Generation complete: \nTime Taken: %i hrs, %i mins, %i secs\n\n",
-        hrs, mins, secs);
+    if (splitMethod==SplitMethod::NAIVE) {
+        printf(
+            "\rBVH Generation complete: \nTime Taken: %i hrs, %i mins, %i secs\n\n",
+            hrs, mins, secs);
+    }else {
+        printf(
+            "\rSAH Generation complete: \nTime Taken: %i hrs, %i mins, %i secs\n\n",
+            hrs, mins, secs);    
+    }
 }
 
 BVHBuildNode* BVHAccel::recursiveBuild(std::vector<Object*> objects)
@@ -54,40 +61,106 @@ BVHBuildNode* BVHAccel::recursiveBuild(std::vector<Object*> objects)
             centroidBounds =
                 Union(centroidBounds, objects[i]->getBounds().Centroid());
         int dim = centroidBounds.maxExtent();
-        switch (dim) {
-        case 0:
-            std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
-                return f1->getBounds().Centroid().x <
-                       f2->getBounds().Centroid().x;
-            });
-            break;
-        case 1:
-            std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
-                return f1->getBounds().Centroid().y <
-                       f2->getBounds().Centroid().y;
-            });
-            break;
-        case 2:
-            std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
-                return f1->getBounds().Centroid().z <
-                       f2->getBounds().Centroid().z;
-            });
-            break;
+        switch (splitMethod) {
+            case SplitMethod::NAIVE:{
+                switch (dim) {
+                    case 0:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().x <
+                                f2->getBounds().Centroid().x;
+                        });
+                        break;
+                    case 1:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().y <
+                                f2->getBounds().Centroid().y;
+                        });
+                        break;
+                    case 2:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().z <
+                                f2->getBounds().Centroid().z;
+                        });
+                        break;
+                }
+                auto beginning = objects.begin();
+                auto middling = objects.begin() + (objects.size() / 2);
+                auto ending = objects.end();
+
+                auto leftshapes = std::vector<Object*>(beginning, middling);
+                auto rightshapes = std::vector<Object*>(middling, ending);
+
+                assert(objects.size() == (leftshapes.size() + rightshapes.size()));
+
+                node->left = recursiveBuild(leftshapes);
+                node->right = recursiveBuild(rightshapes);
+
+                node->bounds = Union(node->left->bounds, node->right->bounds);
+                break;
+            }
+            case SplitMethod::SAH:{
+                float totalSurfaceArea = centroidBounds.SurfaceArea();
+                int bucketSize = 10;
+                int optimalSplitIndex = 0;
+                float minCost = std::numeric_limits<float>::infinity(); //最小花费
+
+                // Sort objects based on their centroid along the max extent dimension
+                switch (dim){
+                    case 0:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().x <
+                                   f2->getBounds().Centroid().x;
+                        });
+                        break;
+                    case 1:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().y <
+                                   f2->getBounds().Centroid().y;
+                        });
+                        break;
+                    case 2:
+                        std::sort(objects.begin(), objects.end(), [](auto f1, auto f2) {
+                            return f1->getBounds().Centroid().z <
+                                   f2->getBounds().Centroid().z;
+                        });
+                        break;
+                }
+                
+                // Find the split that minimizes the SAH cost
+                for (int i = 1; i < bucketSize; i++) {
+                    auto beginning = objects.begin();
+                    auto middling = objects.begin() + (objects.size() * i / bucketSize);
+                    auto ending = objects.end();
+                    auto leftshapes = std::vector<Object *>(beginning, middling);
+                    auto rightshapes = std::vector<Object *>(middling, ending);
+                    //求左右包围盒:
+                    Bounds3 leftBounds, rightBounds;
+                    for (int k = 0; k < leftshapes.size(); ++k)
+                        leftBounds = Union(leftBounds, leftshapes[k]->getBounds().Centroid());
+                    for (int k = 0; k < rightshapes.size(); ++k)
+                        rightBounds = Union(rightBounds, rightshapes[k]->getBounds().Centroid());
+                    float SA = leftBounds.SurfaceArea(); //SA
+                    float SB = rightBounds.SurfaceArea(); //SB
+                    float cost = 0.125 + (leftshapes.size() * SA + rightshapes.size() * SB) / totalSurfaceArea; //计算花费
+                    if (cost < minCost){//如果花费更小，记录当前坐标值
+                        minCost = cost;
+                        optimalSplitIndex = i;
+                    }
+                }
+                //找到optimalSplitIndex后的操作等同于BVH
+                auto beginning = objects.begin();
+                auto middling = objects.begin() + (objects.size() * optimalSplitIndex / bucketSize);//划分点选为当前最优桶的位置
+                auto ending = objects.end();
+                auto leftshapes = std::vector<Object *>(beginning, middling); //数组切分
+                auto rightshapes = std::vector<Object *>(middling, ending);
+
+                assert(objects.size() == (leftshapes.size() + rightshapes.size()));
+
+                node->left = recursiveBuild(leftshapes); //左右开始递归
+                node->right = recursiveBuild(rightshapes);
+                node->bounds = Union(node->left->bounds, node->right->bounds);//返回pMin pMax构成大包围盒
+            }
         }
-
-        auto beginning = objects.begin();
-        auto middling = objects.begin() + (objects.size() / 2);
-        auto ending = objects.end();
-
-        auto leftshapes = std::vector<Object*>(beginning, middling);
-        auto rightshapes = std::vector<Object*>(middling, ending);
-
-        assert(objects.size() == (leftshapes.size() + rightshapes.size()));
-
-        node->left = recursiveBuild(leftshapes);
-        node->right = recursiveBuild(rightshapes);
-
-        node->bounds = Union(node->left->bounds, node->right->bounds);
     }
 
     return node;
@@ -108,15 +181,11 @@ Intersection BVHAccel::getIntersection(BVHBuildNode* node, const Ray& ray) const
     Intersection isect;
     std::array<int, 3> dirIsNeg{ray.direction.x>0,ray.direction.y>0,ray.direction.z>0};
     if(node->bounds.IntersectP(ray, ray.direction_inv, dirIsNeg)){
-        if(node->left){
-            isect = getIntersection(node->left, ray);
-        }
-        if(!isect.happened && node->right){
-            isect = getIntersection(node->right, ray);
-        }
-        if(!isect.happened && node->object){
-            isect = node->object->getIntersection(ray);
-        }
+        if(!node->left && !node->right)return node->object->getIntersection(ray);
+            Intersection isectl,isectr;
+            isectl = getIntersection(node->left, ray);
+            isectr = getIntersection(node->right, ray);
+            return isectl.distance<isectr.distance?isectl:isectr;
     }
     return isect;
 }
